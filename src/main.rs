@@ -34,26 +34,27 @@ fn write_simple_colormap(data: Vec<f32>) -> Vec<u8> {
 }
 
 fn write_kmeans_colormap(data: Vec<f32>) -> Vec<u8> {
-    use palette::cast::from_component_slice;
+    use palette::{cast::from_component_slice, color_difference::{Ciede2000, EuclideanDistance}};
     use palette::{FromColor, IntoColor, Lab, Srgb};
     use kmeans_colors::{get_kmeans_hamerly, Calculate, Kmeans, MapColor, Sort};
     use rayon::prelude::*;
 
-    const RUNS: usize = 20;
-    const K: usize = 40;
+    const RUNS: usize = 100;
+    const K: usize = 50;
 
     let lab: Vec<Lab> = from_component_slice::<Srgb<f32>>(&data)
         .iter()
         .map(|x| x.into_format().into_color())
         .collect();
 
-    let mut seed = rand::random::<u32>() as u64;
-    let result = (0..RUNS).into_par_iter()
+    // let mut seed = rand::random::<u32>() as u64;
+    let mut seed = 0;
+    let mut result = (0..RUNS).into_par_iter()
         .map(|i| {
             get_kmeans_hamerly(
                 K,
-                40,
-                0.5,
+                120,
+                0.01,
                 true,
                 &lab,
                 seed + i as u64,
@@ -64,9 +65,27 @@ fn write_kmeans_colormap(data: Vec<f32>) -> Vec<u8> {
 
     println!("Min score: {}", result.score);
 
-    let rgb = &result.centroids
-        .iter()
-        .map(|x| Srgb::from_color(*x).into_format())
+    let mut res = result.centroids.clone().into_iter().enumerate().collect::<Vec<_>>();
+    let mut sorted = vec![res.pop().unwrap()];
+
+    while res.len() > 0 {
+        let top = sorted.last().unwrap().1;
+        let next = res.iter().enumerate().fold((0, f32::MAX), |acc, (i1, (_, r))| {
+            let d = top.difference(*r);
+            if d < acc.1 {
+                (i1, d)
+            } else {
+                acc
+            }
+        });
+        sorted.push(res.remove(next.0));
+    }
+
+    let idxs = sorted.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+
+    let rgb = sorted
+        .into_iter()
+        .map(|(_, x)| Srgb::from_color(x).into_format())
         .collect::<Vec<Srgb<u8>>>();
 
     let mut writer = std::fs::File::create("colormap.pal").unwrap();
@@ -80,7 +99,10 @@ fn write_kmeans_colormap(data: Vec<f32>) -> Vec<u8> {
         writeln!(writer, "Color: {idx} {r} {g} {b} {r} {g} {b}").unwrap();
     }
 
-    result.indices
+    let mut idxs2 = (0..K).collect::<Vec<_>>();
+    idxs2.sort_by_key(|i| idxs[*i]);
+
+    result.indices.iter().cloned().map(|v| idxs2[v as usize] as u8).collect()
 }
 
 fn clamp(x: f32) -> f32 {
@@ -97,8 +119,6 @@ enum Fit {
     Min,
     Val(f32), 
 }
-
-fn intersection
 
 fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, gates): (u32, u32), width: f32, fit: Fit, random: bool, kmeans: bool) -> Result<(), Box<dyn std::error::Error>> {
     let image = image::open(image)?.to_rgb32f();
@@ -164,7 +184,6 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
         ..Default::default()
     };
 
-    let mut i = 0;
     for rayi in 0..rays {
         let azimuth = 360.0 * rayi as f32 / rays as f32;
 
