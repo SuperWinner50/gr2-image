@@ -48,12 +48,14 @@ fn cost_diff(colors: &Vec<(usize, Lab)>, a: usize, b: usize) -> f32 {
         end += colors[a - 1].1.difference(colors[b].1).powi(2) - colors[a - 1].1.difference(colors[a].1).powi(2);
     }
 
-    if a < colors.len() - 1 {
-        end += colors[b].1.difference(colors[a + 1].1).powi(2) - colors[a].1.difference(colors[a + 1].1).powi(2);
-    }
-
-    if b > 0 {
-        end += colors[b - 1].1.difference(colors[a].1).powi(2) - colors[b - 1].1.difference(colors[b].1).powi(2);
+    if a.abs_diff(b) != 1 {
+        if a < colors.len() - 1 {
+            end += colors[b].1.difference(colors[a + 1].1).powi(2) - colors[a].1.difference(colors[a + 1].1).powi(2);
+        }
+        
+        if b > 0 {
+            end += colors[b - 1].1.difference(colors[a].1).powi(2) - colors[b - 1].1.difference(colors[b].1).powi(2);
+        }
     }
 
     if b < colors.len() - 1 {
@@ -63,58 +65,68 @@ fn cost_diff(colors: &Vec<(usize, Lab)>, a: usize, b: usize) -> f32 {
     end
 }
 
-// fn cost_change(colors: &Vec<(usize, Lab)>, a: usize, b: usize) -> f32 {
-//     cost_diff(colors, b, a) - cost_diff(colors, a, b)
-// }
-
-fn anneal(colors: &mut Vec<(usize, Lab)>) -> f32 {
+fn anneal(colors: &Vec<(usize, Lab)>) -> (Vec<(usize, Lab)>, f32)  {
     use rand::Rng;
+    
+    let mut colors = colors.clone();
 
-    let runs = 50000;
-
-    // let max = 150.0 * K as f32;
-    // let a = 15.0;
-
-    let mut max = 10000.0;
+    let runs = 200000;
+    let max = 10000.0;
     let a = 15.0;
+    let restart_n = 50000;
 
+    let mut c = total_cost(&colors);
+    let mut best = (0, colors.clone(), c);
     let mut rng = rand::thread_rng();
 
     for i in 0..runs {
-        let p1 = rng.gen_range(0..colors.len());
-        let p2 = rng.gen_range(0..colors.len());
+        if i - best.0 > restart_n {
+            colors = best.1.clone();
+            c = best.2;
+            best.0 = i;
+        }
+
+        let mut p1 = rng.gen_range(0..colors.len());
+        let mut p2 = rng.gen_range(0..colors.len());
 
         if p1 == p2 {
             continue;
         }
 
-        // let temp = max * 0.5f32.powf(a * (i + 1) as f32 / runs as f32) - max * 0.5f32.powf(a) - 2.0 * K as f32;
+        if p1 > p2 {
+            std::mem::swap(&mut p1, &mut p2);
+        }
+
         let temp = max * 0.5f32.powf(a * (i + 1) as f32 / runs as f32) - max * 0.5f32.powf(a);
 
-        let change = cost_diff(colors, p1, p2);
-        let p = (-change / temp).exp();
+        let change = cost_diff(&colors, p1, p2);
 
-        if change <= 0.0 || p >= rand::random::<f32>() {
+        if change < temp  {
+            c += change;
             colors.swap(p1, p2);
+        }
+
+        if c < best.2 {
+            best = (i, colors.clone(), c);
         }
     }
 
-    let c = total_cost(&colors);
-    println!("Cost {c}");
-    c
+    (best.1, best.2)
 }
 
 fn write_kmeans_colormap(data: Vec<f32>) -> Vec<u8> {
     use palette::{cast::from_component_slice, color_difference::Ciede2000};
     use palette::{FromColor, IntoColor, Lab, Srgb};
     use kmeans_colors::{get_kmeans_hamerly};
+    use rand::seq::SliceRandom;
 
     let lab: Vec<Lab> = from_component_slice::<Srgb<f32>>(&data)
         .iter()
         .map(|x| x.into_format().into_color())
         .collect();
 
-    let seed = rand::random::<u32>() as u64;
+    // let seed = rand::random::<u32>() as u64;
+    let seed = 1;
     let result = (0..RUNS).into_par_iter()
         .map(|i| {
             get_kmeans_hamerly(
@@ -133,12 +145,8 @@ fn write_kmeans_colormap(data: Vec<f32>) -> Vec<u8> {
 
     let mut res = result.centroids.clone().into_iter().enumerate().collect::<Vec<_>>();
 
-    let (sorted, cost) = (0..100).into_par_iter()
-        .map(|_| {
-            let mut res = res.clone();
-            let cost = anneal(&mut res);
-            (res, cost)
-        })
+    let (sorted, cost) = (0..ANNEALING_PAR_N).into_par_iter()
+        .map(|_| anneal(&res))
         .reduce_with(|a, b| if a.1 < b.1 { a } else { b })
         .unwrap();
 
@@ -336,8 +344,9 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
     Ok(())
 }
 
+const ANNEALING_PAR_N: usize = 8;
 const RUNS: usize = 30;
-const K: usize = 50;
+const K: usize = 150;
 
 fn parse_args() {
     use clap::{Command, Arg};
