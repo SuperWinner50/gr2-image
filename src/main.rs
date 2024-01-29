@@ -70,16 +70,16 @@ fn anneal(colors: &Vec<(usize, Lab)>) -> (Vec<(usize, Lab)>, f32)  {
     
     let mut colors = colors.clone();
 
-    let runs = 200000;
+    // Params (experimental)
     let max = 10000.0;
     let a = 15.0;
-    let restart_n = 50000;
+    let restart_n = ANNEALING_RUNS / 10;
 
     let mut c = total_cost(&colors);
     let mut best = (0, colors.clone(), c);
     let mut rng = rand::thread_rng();
 
-    for i in 0..runs {
+    for i in 0..ANNEALING_RUNS {
         if i - best.0 > restart_n {
             colors = best.1.clone();
             c = best.2;
@@ -97,7 +97,7 @@ fn anneal(colors: &Vec<(usize, Lab)>) -> (Vec<(usize, Lab)>, f32)  {
             std::mem::swap(&mut p1, &mut p2);
         }
 
-        let temp = max * 0.5f32.powf(a * (i + 1) as f32 / runs as f32) - max * 0.5f32.powf(a);
+        let temp = max * 0.5f32.powf(a * (i + 1) as f32 / ANNEALING_RUNS as f32) - max * 0.5f32.powf(a);
 
         let change = cost_diff(&colors, p1, p2);
 
@@ -127,12 +127,12 @@ fn write_kmeans_colormap(data: Vec<f32>) -> Vec<u8> {
 
     // let seed = rand::random::<u32>() as u64;
     let seed = 1;
-    let result = (0..RUNS).into_par_iter()
+    let result = (0..KMEANS_RUNS).into_par_iter()
         .map(|i| {
             get_kmeans_hamerly(
                 K,
                 100,
-                2.0,
+                0.1,
                 true,
                 &lab,
                 seed + i as u64,
@@ -273,11 +273,11 @@ fn get_colors_nearest(image: &image::Rgb32FImage, rays: u32, gates: u32, x: f32,
     colors
 }
 
-fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, gates): (u32, u32), width: f32, fit: Fit, kmeans: bool, antialias: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, gates): (u32, u32), radius: f32, fit: Fit, kmeans: bool, antialias: bool) -> Result<(), Box<dyn std::error::Error>> {
     let image = image::open(image)?.to_rgb32f();
     
     let size = match fit {
-        Fit::Max => (image.width() as f32).hypot(image.height() as f32) / 2.0 * 1.05,
+        Fit::Max => (image.width() as f32).hypot(image.height() as f32) / 2.0,
         Fit::Min => std::cmp::min(image.width(), image.height()) as f32 / 2.0,
         Fit::Val(x) => x
     };
@@ -300,12 +300,12 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
 
     let param = silv::ParamDescription {
         meters_to_first_cell: 0.0,
-        meters_between_cells: width,
+        meters_between_cells: radius / gates as f32 * 1000.0,
         ..Default::default()
     };
 
     let mut radar = RadarFile {
-        name: "KDLH".into(),
+        name: "KSRX".into(),
         scan_mode: silv::ScanMode::PPI,
         sweeps: Vec::new(),
         params: HashMap::from([("REF".into(), param.clone())]),
@@ -334,6 +334,11 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
 
             ray.data.get_mut("REF").unwrap().push(color_idx);
         }
+
+        // Padding gates because GR2 clips some?????
+        for _ in 0..45 {
+            ray.data.get_mut("REF").unwrap().push(-999.0);
+        }
         
         sweep.rays.push(ray);
     }
@@ -344,9 +349,10 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
     Ok(())
 }
 
-const ANNEALING_PAR_N: usize = 8;
-const RUNS: usize = 30;
-const K: usize = 150;
+const ANNEALING_PAR_N: usize = 30;
+const ANNEALING_RUNS: usize = 500_000;
+const KMEANS_RUNS: usize = 30;
+const K: usize = 20; // Max: 254
 
 fn parse_args() {
     use clap::{Command, Arg};
@@ -354,7 +360,7 @@ fn parse_args() {
     let m = Command::new("gr2-image")
         .author("SuperWinner50")
         .version("1.0.0")
-        .about("A program to convert images into a radar-readable format.")
+        .about("A program to convert images into a radar-readable format (Specifically for GR2).")
         .args([
             Arg::new("position")
                 .short('p')
@@ -369,16 +375,16 @@ fn parse_args() {
                 .help("Number of rays and gates")
                 .num_args(2)
                 .value_names(["rays", "gates"])
-                .default_values(["1200", "1200"]),
+                .default_values(["1000", "1000"]),
             Arg::new("size")
                 .short('s')
                 .long("size")
-                .help("Scale of radar. Options: max, min, or size in pixels")
+                .help("Scale of radar from the image, with options to fit entire image or largest possible without borders. Options: max, min, or size in pixels")
                 .default_value("max"),
-            Arg::new("width")
-                .short('w')
-                .long("width")
-                .help("Gate width")
+            Arg::new("radius")
+                .short('R')
+                .long("radius")
+                .help("Radius of image in km")
                 .default_value("100"),
             Arg::new("kmeans")
                 .short('k')
@@ -403,10 +409,10 @@ fn parse_args() {
         v => Fit::Val(v.parse().unwrap())
     };
 
-    let width = m.get_one::<String>("width").unwrap().parse().unwrap();
+    let radius = m.get_one::<String>("radius").unwrap().parse().unwrap();
     let im = m.get_one::<String>("files").unwrap();
 
-    match write_image(&im, (pos[0], pos[1]), (res[0], res[1]), width, fit, m.get_flag("kmeans"), m.get_flag("antialias")) {
+    match write_image(&im, (pos[0], pos[1]), (res[0], res[1]), radius, fit, m.get_flag("kmeans"), m.get_flag("antialias")) {
         Err(e) => println!("Error {e} occured while reading {im:?}"),
         _ => ()
     }
