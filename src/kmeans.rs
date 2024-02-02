@@ -1,10 +1,7 @@
-use std::io::Write;
-
-use palette::{cast::from_component_slice, color_difference::Ciede2000};
-use palette::{FromColor, IntoColor, Lab, Srgb};
+use palette::{cast::from_component_slice};
+use palette::{IntoColor, Lab, Srgb};
 use kmeans_colors::get_kmeans_hamerly;
 use rayon::prelude::*;
-use rand::Rng;
 
 const KMEANS_RUNS: usize = 8;
 

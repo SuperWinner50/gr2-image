@@ -84,7 +84,7 @@ fn anneal(colors: &Vec<(usize, Lab)>) -> (Vec<(usize, Lab)>, f32)  {
 pub fn write_annealing_colormap(cmap: Vec<Lab>, inds: Vec<u8>) -> Vec<u8> {
     let res = cmap.into_iter().enumerate().collect::<Vec<_>>();
 
-    let (sorted, cost) = (0..ANNEALING_PAR_N).into_par_iter()
+    let (sorted, _) = (0..ANNEALING_PAR_N).into_par_iter()
         .map(|_| anneal(&res))
         .reduce_with(|a, b| if a.1 < b.1 { a } else { b })
         .unwrap();

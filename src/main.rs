@@ -27,8 +27,8 @@ fn get_simple_colormap(data: Vec<f32>) -> (Vec<Lab>, Vec<u8>) {
         for c2 in 0..gx {
             for c1 in 0..rx {
                 let r = c1 as f32 / (rx - 1) as f32;
-                let g = c2 as f32 / (gx - 1) as f32;;
-                let b = c3 as f32 / (bx - 1) as f32;;
+                let g = c2 as f32 / (gx - 1) as f32;
+                let b = c3 as f32 / (bx - 1) as f32;
                 
                 let color = Srgb::new(r, g, b).into_color();
                 colors.push(color);
@@ -71,7 +71,7 @@ fn weight(image: &image::Rgb32FImage, points: Vec<(f32, f32)>) -> Option<[f32; 3
     let maxx = points.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b.0)).ceil() as usize;
     let maxy = points.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b.1)).ceil() as usize;
 
-    let mut pts = points.iter().map(|p| (p.0 - minx as f32, p.1 - miny as f32)).collect::<Vec<_>>();
+    let pts = points.iter().map(|p| (p.0 - minx as f32, p.1 - miny as f32)).collect::<Vec<_>>();
     let poly = &Polygon::new(LineString::from(pts.clone()), vec![]);
 
     (0..maxx-minx).into_par_iter()
@@ -80,7 +80,7 @@ fn weight(image: &image::Rgb32FImage, points: Vec<(f32, f32)>) -> Option<[f32; 3
                 let (x, y) = (xi as f32, yi as f32);                
                 let px = Polygon::new(LineString::from(vec![(x, y), (x + 1.0, y), (x + 1.0, y + 1.0), (x, y + 1.0)]), vec![]);
         
-                let weight = px.intersection(poly, 10000.0).signed_area();
+                let weight = px.intersection(poly, 100000.0).signed_area();
                 
                 if weight > 0.0 {
                     image.get_pixel_checked((xi + minx) as u32, (yi + miny) as u32).map(|v| (weight, v.0.map(|c| c * weight)))
@@ -108,7 +108,7 @@ fn get_colors_avg(image: &image::Rgb32FImage, rays: u32, gates: u32, x: f32, y: 
             let r1 = size * gate as f32 / gates as f32;
             let r2 = size * (gate + 1) as f32 / gates as f32;
 
-            let mut pts = [(r1 * ca1, r1 * sa1), (r2 * ca1, r2 * sa1), (r2 * ca2, r2 * sa2), (r1 * ca2, r1 * sa2)].map(|p| (p.0 + x * image.width() as f32, p.1 + y * image.height() as f32));
+            let pts = [(r1 * ca1, r1 * sa1), (r2 * ca1, r2 * sa1), (r2 * ca2, r2 * sa2), (r1 * ca2, r1 * sa2)].map(|p| (p.0 + x * image.width() as f32, p.1 + y * image.height() as f32));
 
             if pts.iter().all(|p| 0.0 > p.0 || p.0 >= image.width() as f32) || pts.iter().all(|p| 0.0 > p.1 || p.1 >= image.height() as f32) {
                 continue;
@@ -116,8 +116,11 @@ fn get_colors_avg(image: &image::Rgb32FImage, rays: u32, gates: u32, x: f32, y: 
 
             let idx = gate as usize + ray as usize * gates as usize;
 
-            let color = weight(image, pts.into()).expect("Weight should not be done");
-            colors.insert(idx, color);
+            if let Some(color) = weight(image, pts.into()) {
+                colors.insert(idx, color);
+            } else {
+                println!("No weight value value found; Points: {pts:?}");
+            }
         }
     }
 
@@ -203,7 +206,7 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
     };
 
     let mut radar = RadarFile {
-        name: "KSRX".into(),
+        name: "KCYS".into(),
         scan_mode: silv::ScanMode::PPI,
         sweeps: Vec::new(),
         params: HashMap::from([("REF".into(), param.clone())]),
