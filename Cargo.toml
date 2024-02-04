@@ -12,8 +12,10 @@ geo-clipper = "0.8.0"
 glob = "0.3.1"
 image = "0.24.2"
 kmeans_colors = { version = "0.6", features = ["palette_color"], default-features=false }
-palette = "0.7.3"
+palette = "0.7.4"
 rand = "0.8.5"
 rayon = "1.8.1"
 silv = { git = "https://github.com/SuperWinner50/silv-test.git" }
 lkh-rs = { path = "../lkh-rs" }
+quantette = { path = "../quantette" }
+rand_chacha = "0.3.1"

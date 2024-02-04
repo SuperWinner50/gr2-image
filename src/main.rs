@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 
 use silv::{RadarFile, Sweep, Ray};
 use rayon::prelude::*;
@@ -60,6 +61,13 @@ enum Fit {
     Max,
     Min,
     Val(f32), 
+}
+
+#[derive(Clone, Copy)]
+enum Smoothing {
+    Normal,
+    Annealing,
+    TSP,
 }
 
 fn weight(image: &image::Rgb32FImage, points: Vec<(f32, f32)>) -> Option<[f32; 3]> {
@@ -159,7 +167,7 @@ pub fn write_colormap(cmap: Vec<Lab>, inds: Vec<u8>) -> Vec<u8> {
 
     for i in 0..rgb.len() {
         let (r, g, b) = rgb[i].into_components();
-        let idx = i as f32 / 2.0 - 32.0;
+        let idx = offset(i as f32);
 
         writeln!(writer, "Color: {idx} {r} {g} {b} {r} {g} {b}").unwrap();
     }
@@ -167,41 +175,42 @@ pub fn write_colormap(cmap: Vec<Lab>, inds: Vec<u8>) -> Vec<u8> {
     inds
 }
 
-fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, gates): (u32, u32), radius: f32, fit: Fit, kmeans: Option<usize>, antialias: bool, smoothing: usize) -> Result<(), Box<dyn std::error::Error>> {
-    let image = image::open(image)?.to_rgb32f();
+fn write_image(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    let image = image::open(args.image)?.to_rgb32f();
     
-    let size = match fit {
+    let size = match args.fit {
         Fit::Max => (image.width() as f32).hypot(image.height() as f32) / 2.0,
         Fit::Min => std::cmp::min(image.width(), image.height()) as f32 / 2.0,
         Fit::Val(x) => x
     };
 
-    let colors = if antialias {
-        get_colors_avg(&image, rays, gates, x, y, size)
+    let colors = if args.antialias {
+        get_colors_avg(&image, args.rays, args.gates, args.x, args.y, size)
     } else {
-        get_colors_nearest(&image, rays, gates, x, y, size)
+        get_colors_nearest(&image, args.rays, args.gates, args.x, args.y, size)
     };
 
     let data: Vec<_> = colors.values().cloned().flatten().collect();
 
-    let (cmap, inds) = if let Some(k) = kmeans {
-        get_kmeans_colormap(data, k)
+    let (cmap, inds) = if let Some(k) = args.kmeans {
+        // get_kmeans_colormap_gpu(data.clone(), k, (args.rays, args.gates));
+        get_kmeans_colormap_o(data, k.try_into().expect("Too many clusters"))
+        // get_kmeans_colormap(data, k)
     } else {
-        get_simple_colormap(data)
+        get_simple_colormap(data.clone())
     };
 
-    let inds = match smoothing {
-        0 => write_colormap(cmap, inds),
-        1 => anneal::write_annealing_colormap(cmap, inds),
-        2 => tsp::write_tsp_colormap(cmap, inds),
-        _ => panic!("Bad")
+    let inds = match args.smoothing {
+        Smoothing::Normal => write_colormap(cmap, inds),
+        Smoothing::Annealing => anneal::write_annealing_colormap(cmap, inds),
+        Smoothing::TSP => tsp::write_tsp_colormap(cmap, inds)
     };
 
     let colors = colors.keys().zip(inds).collect::<HashMap<_,_>>();
 
     let param = silv::ParamDescription {
         meters_to_first_cell: 0.0,
-        meters_between_cells: radius / gates as f32 * 1000.0,
+        meters_between_cells: args.radius / args.gates as f32 * 1000.0,
         ..Default::default()
     };
 
@@ -217,8 +226,8 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
         ..Default::default()
     };
 
-    for rayi in 0..rays {
-        let azimuth = 360.0 * rayi as f32 / rays as f32;
+    for rayi in 0..args.rays {
+        let azimuth = 360.0 * rayi as f32 / args.rays as f32;
 
         let mut ray = Ray {
             azimuth: azimuth + 90.0,
@@ -226,8 +235,8 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
             ..Default::default()
         };
 
-        for gate in 0..gates {
-            let color_idx = if let Some(o) = colors.get(&((gate + rayi * gates) as usize)) {
+        for gate in 0..args.gates {
+            let color_idx = if let Some(o) = colors.get(&((gate + rayi * args.gates) as usize)) {
                 offset(*o as f32) as f64
             } else {
                 -999.0
@@ -248,6 +257,19 @@ fn write_image(image: impl AsRef<std::path::Path>, (x, y): (f32, f32), (rays, ga
     silv::write(radar, ".", &silv::RadyOptions::default());
 
     Ok(())
+}
+
+struct Args {
+    image: PathBuf,
+    x: f32,
+    y: f32,
+    rays: u32,
+    gates: u32,
+    radius: f32,
+    fit: Fit,
+    kmeans: Option<usize>,
+    antialias: bool,
+    smoothing: Smoothing
 }
 
 fn parse_args() {
@@ -313,8 +335,13 @@ fn parse_args() {
 
     let pos = m.get_many::<String>("position").unwrap().map(|v| v.parse::<f32>().unwrap()).collect::<Vec<_>>();
     let res = m.get_many::<String>("resolution").unwrap().map(|v| v.parse::<u32>().unwrap()).collect::<Vec<_>>();
-    let k = m.get_one::<u32>("kmeans").map(|&v| v as usize);
-    let smoothing = m.get_one::<String>("smoothing").unwrap().parse::<usize>().unwrap();
+    let kmeans = m.get_one::<u32>("kmeans").map(|&v| v as usize);
+    let smoothing = match m.get_one::<String>("smoothing").unwrap().parse::<usize>().unwrap() {
+        0 => Smoothing::Normal,
+        1 => Smoothing::Annealing,
+        2 => Smoothing::TSP,
+        _ => panic!("Invalid smoothing algorithm")
+    };
     
     let fit = match m.get_one::<String>("fit").unwrap().as_str() {
         "max" => Fit::Max,
@@ -325,7 +352,20 @@ fn parse_args() {
     let radius = m.get_one::<String>("radius").unwrap().parse().unwrap();
     let im = m.get_one::<String>("files").unwrap();
 
-    match write_image(&im, (pos[0], pos[1]), (res[0], res[1]), radius, fit, k, m.get_flag("antialias"), smoothing) {
+    let args = Args {
+        image: im.into(),
+        x: pos[0],
+        y: pos[1],
+        rays: res[0],
+        gates: res[1],
+        radius,
+        fit,
+        kmeans,
+        antialias: m.get_flag("antialias"),
+        smoothing
+    };
+
+    match write_image(args) {
         Err(e) => println!("Error {e} occured while reading {im:?}"),
         _ => ()
     }

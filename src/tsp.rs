@@ -1,4 +1,4 @@
-use palette::color_difference::Ciede2000;
+use palette::color_difference::ImprovedCiede2000;
 use palette::{Lab, Srgb, FromColor};
 
 use std::io::{Write, BufRead, BufReader};
@@ -28,10 +28,10 @@ EDGE_WEIGHT_SECTION:\n", n + 1);
             let d = if i == n {
                 0.0
             } else {
-                nodes[i].difference(nodes[j])
+                nodes[i].improved_difference(nodes[j])
             };
 
-            problem += &format!("{:.0} ", d * 100.0);
+            problem += &format!("{:.0} ", d * 1000.0);
         }
     }
 
