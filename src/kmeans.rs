@@ -11,7 +11,7 @@ pub fn get_kmeans_colormap(data: Vec<f32>, k: usize) -> (Vec<Lab>, Vec<u8>) {
         .map(|x| x.into_format().into_color())
         .collect();
 
-    let seed = 2;
+    let seed = rand::random::<u32>() as u64;
     let s = std::time::Instant::now();
     let result = (0..KMEANS_RUNS).into_par_iter()
         .map(|i| {

@@ -215,7 +215,7 @@ fn write_image(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut radar = RadarFile {
-        name: "KCYS".into(),
+        name: args.radar,
         scan_mode: silv::ScanMode::PPI,
         sweeps: Vec::new(),
         params: HashMap::from([("REF".into(), param.clone())]),
@@ -269,7 +269,8 @@ struct Args {
     fit: Fit,
     kmeans: Option<usize>,
     antialias: bool,
-    smoothing: Smoothing
+    smoothing: Smoothing,
+    radar: String,
 }
 
 fn parse_args() {
@@ -328,7 +329,11 @@ fn parse_args() {
                     PossibleValue::new("1").help("Use a simulated annealing algorithm"),
                     PossibleValue::new("2").help("Use a travelling salesman solver")
                 ])
-                .default_value("0"),
+                .default_value("2"),
+            Arg::new("radar")
+                .long("radar")
+                .help("Choose a radar to use")
+                .default_value("KCYS"),
             Arg::new("files")
                 .required(true)
         ]).get_matches();
@@ -342,6 +347,8 @@ fn parse_args() {
         2 => Smoothing::TSP,
         _ => panic!("Invalid smoothing algorithm")
     };
+
+    let radar = m.get_one::<String>("radar").unwrap().clone();
     
     let fit = match m.get_one::<String>("fit").unwrap().as_str() {
         "max" => Fit::Max,
@@ -362,7 +369,8 @@ fn parse_args() {
         fit,
         kmeans,
         antialias: m.get_flag("antialias"),
-        smoothing
+        smoothing,
+        radar
     };
 
     match write_image(args) {
