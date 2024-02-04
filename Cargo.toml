@@ -17,5 +17,3 @@ rand = "0.8.5"
 rayon = "1.8.1"
 silv = { git = "https://github.com/SuperWinner50/silv-test.git" }
 lkh-rs = { path = "../lkh-rs" }
-quantette = { path = "../quantette" }
-rand_chacha = "0.3.1"

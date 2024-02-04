@@ -194,8 +194,8 @@ fn write_image(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let (cmap, inds) = if let Some(k) = args.kmeans {
         // get_kmeans_colormap_gpu(data.clone(), k, (args.rays, args.gates));
-        get_kmeans_colormap_o(data, k.try_into().expect("Too many clusters"))
-        // get_kmeans_colormap(data, k)
+        // get_kmeans_colormap_o(data, k.try_into().expect("Too many clusters"))
+        get_kmeans_colormap(data, k)
     } else {
         get_simple_colormap(data.clone())
     };
